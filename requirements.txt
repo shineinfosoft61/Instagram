@@ -2,3 +2,4 @@ Django
 python-dotenv
 django-storages
 boto3
+gunicorn
