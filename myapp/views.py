@@ -65,11 +65,12 @@ class InstagramDownloadView(APIView):
 
     # -------- FACEBOOK + WHATSAPP (yt-dlp) --------
     def download_with_ytdlp(self, url, temp_dir):
-        outtmpl = os.path.join(temp_dir, "%(title)s.%(ext)s")
+        outtmpl = os.path.join(temp_dir, "%(id)s.%(ext)s")
 
         ydl_opts = {
             "outtmpl": outtmpl,
-            "format": "best"
+            "format": "best",
+            "restrictfilenames": True,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
