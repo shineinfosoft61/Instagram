@@ -5,3 +5,4 @@ boto3
 gunicorn
 djangorestframework
 instaloader
+yt_dlp
