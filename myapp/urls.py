@@ -18,6 +18,7 @@ from django.urls import path
 from .views import InstagramDownloadView, InstagramPrivateReelDownloadView
 
 urlpatterns = [
+    path('ping', InstagramDownloadView.as_view(), name='instagram-download'),
     path('instagram-download', InstagramDownloadView.as_view(), name='instagram-download'),
     path('instagram-private-reel-download', InstagramPrivateReelDownloadView.as_view(), name='instagram-private-reel-download'),
 ]

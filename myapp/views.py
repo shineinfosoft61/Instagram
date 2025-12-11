@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import boto3
 from urllib.parse import urlparse
 from rest_framework.views import APIView
@@ -12,6 +13,11 @@ import yt_dlp
 import instaloader
 import os, random, boto3
 from urllib.parse import urlparse
+
+
+class Ping(APIView):
+    def post(self, request):
+        return Response({"success": "health is ok"}, status=200)
 
 class InstagramDownloadView(APIView):
     def post(self, request):
