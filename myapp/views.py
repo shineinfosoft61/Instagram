@@ -90,6 +90,7 @@ class InstagramDownloadView(APIView):
             "restrictfilenames": True,
             "quiet": True,
             "no_warnings": True,
+            "cookiefile": "../../cookies.txt"
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
