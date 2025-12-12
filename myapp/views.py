@@ -2,6 +2,9 @@ import os
 import random
 import re
 import boto3
+import uuid
+import shutil
+
 from urllib.parse import urlparse
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -25,27 +28,29 @@ class InstagramDownloadView(APIView):
         if not url:
             return Response({"error": "URL is required"}, status=400)
 
-        temp_dir = "/tmp/social_downloads"
+        # Create a unique temp folder for every request (fix file conflict issues)
+        temp_dir = f"/tmp/social_downloads_{uuid.uuid4().hex}"
         os.makedirs(temp_dir, exist_ok=True)
 
-        uploaded_files = []
-
         try:
-            # ---------- PLATFORM DETECTOR ----------
+            # ----------- Platform Detector ------------
             if "instagram.com" in url:
                 uploaded_files = self.download_instagram(url, temp_dir)
 
-            elif "whatsapp.com" in url or "wa.me" in url:
+            elif any(x in url for x in ["youtube.com", "youtu.be"]):
                 uploaded_files = self.download_with_ytdlp(url, temp_dir)
 
-            elif "facebook.com" in url or "fb.watch" in url:
+            elif any(x in url for x in ["facebook.com", "fb.watch"]):
+                uploaded_files = self.download_with_ytdlp(url, temp_dir)
+
+            elif any(x in url for x in ["whatsapp.com", "wa.me"]):
                 uploaded_files = self.download_with_ytdlp(url, temp_dir)
 
             else:
                 return Response({"error": "Unsupported URL platform"}, status=400)
 
-            # Upload to s3
-            s3_urls = self.upload_to_s3(uploaded_files)
+            # Upload all downloaded files to S3
+            s3_urls = self.upload_to_s3(uploaded_files, temp_dir)
 
             return Response({
                 "message": "Downloaded Successfully",
@@ -58,53 +63,78 @@ class InstagramDownloadView(APIView):
         finally:
             self.clean_files(temp_dir)
 
-    # --------------- INSTAGRAM --------------------
+    # ----------- INSTAGRAM DOWNLOAD -----------
     def download_instagram(self, url, temp_dir):
         parsed = urlparse(url)
         shortcode = parsed.path.strip("/").split("/")[-1]
 
-        loader = instaloader.Instaloader(dirname_pattern=temp_dir, save_metadata=False)
+        loader = instaloader.Instaloader(
+            dirname_pattern=temp_dir,
+            save_metadata=False
+        )
+
         post = instaloader.Post.from_shortcode(loader.context, shortcode)
         loader.download_post(post, target=temp_dir)
 
-        return os.listdir(temp_dir)
+        files = [f for f in os.listdir(temp_dir) if not f.endswith(".json")]
+        return files
 
-    # -------- FACEBOOK + WHATSAPP (yt-dlp) --------
+    # ----------- YT-DLP DOWNLOAD (YouTube + FB + WhatsApp) -----------
     def download_with_ytdlp(self, url, temp_dir):
-        outtmpl = os.path.join(temp_dir, "%(id)s.%(ext)s")
+        outtmpl = os.path.join(temp_dir, "%(title)s.%(ext)s")
 
         ydl_opts = {
             "outtmpl": outtmpl,
-            "format": "best",
+            "format": "bestvideo+bestaudio/best",
+            "merge_output_format": "mp4",
             "restrictfilenames": True,
+            "quiet": True,
+            "no_warnings": True,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
-        return os.listdir(temp_dir)
+        files = os.listdir(temp_dir)
+        return files
 
-    # --------------- S3 Upload --------------------
-    def upload_to_s3(self, files):
-        s3 = boto3.client("s3",
+    # ----------- UPLOAD TO S3 -----------
+    def upload_to_s3(self, files, temp_dir):
+        s3 = boto3.client(
+            "s3",
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY)
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
+        )
 
-        result_urls = []
+        uploaded_urls = []
+
         for file in files:
-            local = f"/tmp/social_downloads/{file}"
+            local_path = os.path.join(temp_dir, file)
+            if not os.path.isfile(local_path):
+                continue
+
             ext = file.split(".")[-1]
-            new = f"{random.randint(1111,9999)}.{ext}"
-            s3_key = f"social_downloads/{new}"
+            unique_name = f"{uuid.uuid4().hex}.{ext}"
+            s3_key = f"social_downloads/{unique_name}"
 
-            s3.upload_file(local, settings.AWS_STORAGE_BUCKET_NAME, s3_key, ExtraArgs={"ACL": "public-read"})
-            result_urls.append(f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{s3_key}")
+            s3.upload_file(
+                local_path,
+                settings.AWS_STORAGE_BUCKET_NAME,
+                s3_key,
+                ExtraArgs={"ACL": "public-read"}
+            )
 
-        return result_urls
+            uploaded_urls.append(
+                f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
+            )
 
-    def clean_files(self, path):
-        for root,dirs,files in os.walk(path):
-            for f in files: os.remove(os.path.join(root,f))
+        return uploaded_urls
+
+    # ----------- CLEANUP TEMP FOLDER -----------
+    def clean_files(self, folder_path):
+        if os.path.exists(folder_path):
+            shutil.rmtree(folder_path, ignore_errors=True)
+
 
 
 
