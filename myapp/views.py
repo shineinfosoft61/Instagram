@@ -83,21 +83,64 @@ class InstagramDownloadView(APIView):
     def download_with_ytdlp(self, url, temp_dir):
         outtmpl = os.path.join(temp_dir, "%(title)s.%(ext)s")
 
-        ydl_opts = {
+        # -------- FIRST TRY (NO COOKIES) --------
+        ydl_opts_no_cookies = {
             "outtmpl": outtmpl,
-            "format": "bestvideo+bestaudio/best",
+            "format": "bv*+ba/b",
             "merge_output_format": "mp4",
-            "restrictfilenames": True,
+
             "quiet": True,
             "no_warnings": True,
-            "cookiefile": "../../cookies.txt"
+            "restrictfilenames": True,
+
+            # Anti-bot tuning
+            "sleep_interval": 2,
+            "max_sleep_interval": 5,
+            "retries": 3,
+            "source_address": "0.0.0.0",
+
+            # Android client (MOST IMPORTANT)
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android"],
+                    "skip": ["dash", "hls"]
+                }
+            },
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts_no_cookies) as ydl:
+                ydl.download([url])
+
+            files = os.listdir(temp_dir)
+            if files:
+                return files
+
+        except Exception as e:
+            error_msg = str(e)
+
+            # If NOT bot error → raise immediately
+            if "confirm you’re not a bot" not in error_msg.lower():
+                raise Exception(error_msg)
+
+        # -------- FALLBACK (WITH COOKIES) --------
+        ydl_opts_with_cookies = {
+            "outtmpl": outtmpl,
+            "format": "bv*+ba/b",
+            "merge_output_format": "mp4",
+
+            "quiet": True,
+            "no_warnings": True,
+            "restrictfilenames": True,
+
+            "cookiefile": "/home/ronak/cookies.txt",  # ABSOLUTE PATH
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts_with_cookies) as ydl:
             ydl.download([url])
 
-        files = os.listdir(temp_dir)
-        return files
+        return os.listdir(temp_dir)
+
 
     # ----------- UPLOAD TO S3 -----------
     def upload_to_s3(self, files, temp_dir):
