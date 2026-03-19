@@ -1,21 +1,33 @@
 import os
 import random
-import re
 import boto3
 import uuid
 import shutil
 
 from urllib.parse import urlparse
+from datetime import timedelta
+from django.conf import settings
+from django.core.mail import send_mail
+from django.utils import timezone
+from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework_simplejwt.tokens import RefreshToken
 import instaloader
-from django.conf import settings
 
 import yt_dlp
-import instaloader
-import os, random, boto3
-from urllib.parse import urlparse
+
+from .models import OTPVerification
+from .serializers import (
+    InstagramDownloadSerializer,
+    RegisterSerializer,
+    LoginSerializer,
+    ForgotPasswordSerializer,
+    VerifyOTPSerializer,
+    LogoutSerializer,
+)
 
 
 class Ping(APIView):
@@ -208,7 +220,6 @@ class InstagramPrivateReelDownloadView(APIView):
         )
         print("!!!!!!!!!!!!!!!!!!************************")
 
-
         try:
             # Login for accessing private content
             loader.login(ig_username, ig_password)
@@ -287,3 +298,233 @@ class InstagramPrivateReelDownloadView(APIView):
                 for d in dirs:
                     os.rmdir(os.path.join(root, d))
 
+
+User = get_user_model()
+
+
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            serializer = RegisterSerializer(data=request.data)
+            if not serializer.is_valid():
+                # Flatten first error message
+                first_error = next(iter(serializer.errors.values()))[0]
+                return Response(
+                    {"status": "error", "message": str(first_error)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user = serializer.save()
+            refresh = RefreshToken.for_user(user)
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "User registered successfully.",
+                    "data": {
+                        "userid": str(user.id),
+                        "username": user.name,
+                        "email": user.email,
+                        "token": {
+                            "access_token": str(refresh.access_token),
+                            "refresh_token": str(refresh),
+                        },
+                    },
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            serializer = LoginSerializer(data=request.data)
+            if not serializer.is_valid():
+                first_error = next(iter(serializer.errors.values()))[0]
+                return Response(
+                    {"status": "error", "message": str(first_error)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user = serializer.validated_data["user"]
+            refresh = RefreshToken.for_user(user)
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Login successful.",
+                    "data": {
+                        "userid": str(user.id),
+                        "username": user.name,
+                        "email": user.email,
+                        "token": {
+                            "access_token": str(refresh.access_token),
+                            "refresh_token": str(refresh),
+                        },
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ForgotPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            serializer = ForgotPasswordSerializer(data=request.data)
+            if not serializer.is_valid():
+                first_error = next(iter(serializer.errors.values()))[0]
+                return Response(
+                    {"status": "error", "message": str(first_error)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            email = serializer.validated_data["email"]
+            user = User.objects.get(email__iexact=email)
+
+            # Delete existing OTPs for this user
+            OTPVerification.objects.filter(user=user).delete()
+
+            # Generate 6-digit OTP
+            otp = f"{random.randint(100000, 999999)}"
+            expires_at = timezone.now() + timedelta(minutes=5)
+
+            OTPVerification.objects.create(user=user, otp=otp, expires_at=expires_at)
+
+            subject = "Password Reset OTP"
+            message = f"Your OTP for password reset is: {otp}. It expires in 5 minutes."
+            from_email = settings.DEFAULT_FROM_EMAIL
+            recipient_list = [email]
+
+            try:
+                send_mail(subject, message, from_email, recipient_list, fail_silently=False)
+            except Exception as e:
+                return Response(
+                    {"status": "error", "message": f"Failed to send email: {str(e)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            return Response(
+                {"status": "success", "message": "OTP sent to your email"},
+                status=status.HTTP_200_OK,
+            )
+        except User.DoesNotExist:
+            # Should not usually get here due to serializer validation, but keep clean message
+            return Response(
+                {"status": "error", "message": "No user found with this email."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ResetPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            serializer = VerifyOTPSerializer(data=request.data)
+            if not serializer.is_valid():
+                first_error = next(iter(serializer.errors.values()))[0]
+                return Response(
+                    {"status": "error", "message": str(first_error)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user = serializer.validated_data["user"]
+            otp_obj = serializer.validated_data["otp_obj"]
+            new_password = serializer.validated_data["new_password"]
+
+            if otp_obj.is_expired():
+                otp_obj.delete()
+                return Response(
+                    {"status": "error", "message": "OTP has expired."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user.set_password(new_password)
+            user.save()
+            otp_obj.delete()
+
+            return Response(
+                {"status": "success", "message": "Password reset successfully"},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            serializer = LogoutSerializer(data=request.data)
+            if not serializer.is_valid():
+                first_error = next(iter(serializer.errors.values()))[0]
+                return Response(
+                    {"status": "error", "message": str(first_error)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            refresh_token = serializer.validated_data["refresh_token"]
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception as e:
+                return Response(
+                    {
+                        "status": "error",
+                        "message": f"Failed to blacklist token: {str(e)}",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            return Response(
+                {"status": "success", "message": "Logged out successfully"},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class DeleteAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        try:
+            user = request.user
+            user.delete()
+            return Response(
+                {"status": "success", "message": "Account deleted successfully"},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

@@ -6,3 +6,5 @@ gunicorn
 djangorestframework
 instaloader
 yt_dlp
+djangorestframework-simplejwt
+psycopg2-binary

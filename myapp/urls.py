@@ -15,10 +15,25 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.urls import path
-from .views import InstagramDownloadView, InstagramPrivateReelDownloadView
+from .views import (
+    InstagramDownloadView,
+    InstagramPrivateReelDownloadView,
+    RegisterView,
+    LoginView,
+    ForgotPasswordView,
+    ResetPasswordView,
+    LogoutView,
+    DeleteAccountView,
+)
 
 urlpatterns = [
     path('ping', InstagramDownloadView.as_view(), name='instagram-download'),
     path('instagram-download', InstagramDownloadView.as_view(), name='instagram-download'),
     path('instagram-private-reel-download', InstagramPrivateReelDownloadView.as_view(), name='instagram-private-reel-download'),
+    path('register', RegisterView.as_view(), name='register'),
+    path('login', LoginView.as_view(), name='login'),
+    path('forgot-password', ForgotPasswordView.as_view(), name='forgot-password'),
+    path('reset-password', ResetPasswordView.as_view(), name='reset-password'),
+    path('logout', LogoutView.as_view(), name='logout'),
+    path('delete-account', DeleteAccountView.as_view(), name='delete-account'),
 ]
