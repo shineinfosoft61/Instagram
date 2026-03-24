@@ -97,3 +97,18 @@ class VerifyOTPSerializer(serializers.Serializer):
 
 class LogoutSerializer(serializers.Serializer):
     refresh_token = serializers.CharField()
+
+
+class CreateProductSerializer(serializers.Serializer):
+    name = serializers.CharField(required=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+    amount = serializers.DecimalField(required=True, max_digits=10, decimal_places=2)
+    currency = serializers.CharField(required=False, default="usd")
+
+
+class CreatePaymentIntentSerializer(serializers.Serializer):
+    product_id = serializers.UUIDField(required=True)
+
+
+class PaymentStatusSerializer(serializers.Serializer):
+    stripe_payment_intent_id = serializers.CharField(required=True)

@@ -3,11 +3,14 @@ import random
 import boto3
 import uuid
 import shutil
+import stripe
 
 from urllib.parse import urlparse
 from datetime import timedelta
 from django.conf import settings
 from django.core.mail import send_mail
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
@@ -19,7 +22,7 @@ import instaloader
 
 import yt_dlp
 
-from .models import OTPVerification
+from .models import OTPVerification, StripeProduct, Payment
 from .serializers import (
     InstagramDownloadSerializer,
     RegisterSerializer,
@@ -27,6 +30,9 @@ from .serializers import (
     ForgotPasswordSerializer,
     VerifyOTPSerializer,
     LogoutSerializer,
+    CreateProductSerializer,
+    CreatePaymentIntentSerializer,
+    PaymentStatusSerializer,
 )
 
 
@@ -521,6 +527,225 @@ class DeleteAccountView(APIView):
             user.delete()
             return Response(
                 {"status": "success", "message": "Account deleted successfully"},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class CreateProductView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            stripe.api_key = settings.STRIPE_SECRET_KEY
+            serializer = CreateProductSerializer(data=request.data)
+            if not serializer.is_valid():
+                first_error = next(iter(serializer.errors.values()))[0]
+                return Response(
+                    {"status": "error", "message": str(first_error)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            name = serializer.validated_data["name"]
+            description = serializer.validated_data.get("description", "")
+            amount = serializer.validated_data["amount"]
+            currency = serializer.validated_data.get("currency", "usd")
+
+            stripe_product = stripe.Product.create(name=name, description=description)
+            stripe_price = stripe.Price.create(
+                product=stripe_product.id,
+                unit_amount=int(amount * 100),
+                currency=currency,
+            )
+
+            product = StripeProduct.objects.create(
+                name=name,
+                description=description,
+                amount=amount,
+                currency=currency,
+                stripe_product_id=stripe_product.id,
+                stripe_price_id=stripe_price.id,
+            )
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Product created successfully.",
+                    "data": {
+                        "id": str(product.id),
+                        "name": product.name,
+                        "amount": str(product.amount),
+                        "stripe_product_id": product.stripe_product_id,
+                        "stripe_price_id": product.stripe_price_id,
+                    },
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class CreatePaymentIntentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            stripe.api_key = settings.STRIPE_SECRET_KEY
+            serializer = CreatePaymentIntentSerializer(data=request.data)
+            if not serializer.is_valid():
+                first_error = next(iter(serializer.errors.values()))[0]
+                return Response(
+                    {"status": "error", "message": str(first_error)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            product_id = serializer.validated_data["product_id"]
+            try:
+                product = StripeProduct.objects.get(id=product_id, is_active=True)
+            except StripeProduct.DoesNotExist:
+                return Response(
+                    {"status": "error", "message": "Product not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            payment_intent = stripe.PaymentIntent.create(
+                amount=int(product.amount * 100),
+                currency=product.currency,
+                metadata={"user_id": str(request.user.id), "product_id": str(product.id)},
+            )
+
+            Payment.objects.create(
+                user=request.user,
+                product=product,
+                stripe_payment_intent_id=payment_intent.id,
+                amount=product.amount,
+                currency=product.currency,
+                status="pending",
+                metadata=payment_intent.get("metadata", {}),
+            )
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Payment intent created successfully.",
+                    "data": {
+                        "client_secret": payment_intent.client_secret,
+                        "payment_intent_id": payment_intent.id,
+                        "amount": str(product.amount),
+                        "currency": product.currency,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class StripeWebhookView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            stripe.api_key = settings.STRIPE_SECRET_KEY
+            payload = request.body
+            sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
+
+            try:
+                event = stripe.Webhook.construct_event(
+                    payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+                )
+            except ValueError:
+                return Response(
+                    {"status": "error", "message": "Invalid payload"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            except stripe.error.SignatureVerificationError:
+                return Response(
+                    {"status": "error", "message": "Invalid signature"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            event_type = event.get("type")
+            payment_intent_id = event.get("data", {}).get("object", {}).get("id")
+
+            if event_type in [
+                "payment_intent.succeeded",
+                "payment_intent.payment_failed",
+                "payment_intent.canceled",
+            ] and payment_intent_id:
+                try:
+                    payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
+                    if event_type == "payment_intent.succeeded":
+                        payment.status = "succeeded"
+                    elif event_type == "payment_intent.payment_failed":
+                        payment.status = "failed"
+                    elif event_type == "payment_intent.canceled":
+                        payment.status = "canceled"
+                    payment.save()
+                except Payment.DoesNotExist:
+                    print(f"Payment not found for payment_intent_id: {payment_intent_id}")
+
+            return Response(
+                {"status": "success", "message": "ok"},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class PaymentStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, payment_intent_id):
+        try:
+            serializer = PaymentStatusSerializer(
+                data={"stripe_payment_intent_id": payment_intent_id}
+            )
+            if not serializer.is_valid():
+                first_error = next(iter(serializer.errors.values()))[0]
+                return Response(
+                    {"status": "error", "message": str(first_error)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                payment = Payment.objects.get(
+                    stripe_payment_intent_id=serializer.validated_data["stripe_payment_intent_id"],
+                    user=request.user,
+                )
+            except Payment.DoesNotExist:
+                return Response(
+                    {"status": "error", "message": "Payment not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Payment status fetched successfully.",
+                    "data": {
+                        "payment_intent_id": payment.stripe_payment_intent_id,
+                        "status": payment.status,
+                        "amount": str(payment.amount),
+                        "currency": payment.currency,
+                        "product_name": payment.product.name if payment.product else None,
+                        "created_at": payment.created_at,
+                    },
+                },
                 status=status.HTTP_200_OK,
             )
         except Exception as e:

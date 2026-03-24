@@ -24,6 +24,10 @@ from .views import (
     ResetPasswordView,
     LogoutView,
     DeleteAccountView,
+    CreateProductView,
+    CreatePaymentIntentView,
+    StripeWebhookView,
+    PaymentStatusView,
 )
 
 urlpatterns = [
@@ -36,4 +40,8 @@ urlpatterns = [
     path('reset-password', ResetPasswordView.as_view(), name='reset-password'),
     path('logout', LogoutView.as_view(), name='logout'),
     path('delete-account', DeleteAccountView.as_view(), name='delete-account'),
+    path('create-product', CreateProductView.as_view(), name='create-product'),
+    path('create-payment-intent', CreatePaymentIntentView.as_view(), name='create-payment-intent'),
+    path('stripe-webhook', StripeWebhookView.as_view(), name='stripe-webhook'),
+    path('payment-status/<str:payment_intent_id>', PaymentStatusView.as_view(), name='payment-status'),
 ]
