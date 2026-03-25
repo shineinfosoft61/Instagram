@@ -176,3 +176,9 @@ DEFAULT_FROM_EMAIL = os.getenv("EMAIL_HOST_USER")
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+
+
+AWS_S3_CUSTOM_DOMAIN = f"{os.getenv('AWS_STORAGE_BUCKET_NAME')}.s3.amazonaws.com"
+AWS_S3_OBJECT_PARAMETERS = {
+    'CacheControl': 'max-age=86400',
+}
