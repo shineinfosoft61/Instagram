@@ -78,6 +78,17 @@ class StripeProduct(models.Model):
     currency = models.CharField(max_length=10, default="usd")
     stripe_product_id = models.CharField(max_length=255)
     stripe_price_id = models.CharField(max_length=255)
+    duration_days = models.IntegerField(default=30)
+    plan_type = models.CharField(
+        max_length=20,
+        choices=[
+            ("weekly", "Weekly"),
+            ("monthly", "Monthly"),
+            ("yearly", "Yearly"),
+            ("custom", "Custom"),
+        ],
+        default="monthly",
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -94,10 +105,36 @@ class Payment(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=10, default="usd")
     status = models.CharField(max_length=50, default="pending")
-    stripe_customer_id = models.CharField(max_length=255, blank=True, null=True)
-    metadata = models.JSONField(default=dict, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.stripe_payment_intent_id
+
+
+class UserSubscription(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="subscriptions")
+    product = models.ForeignKey(StripeProduct, on_delete=models.SET_NULL, null=True)
+    payment = models.OneToOneField(
+        Payment, on_delete=models.SET_NULL, null=True, blank=True, related_name="subscription"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=[("active", "Active"), ("expired", "Expired"), ("queued", "Queued")],
+        default="queued",
+    )
+    started_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def is_expired(self):
+        if self.expires_at is None:
+            return False
+        return self.expires_at < timezone.now()
+
+    def __str__(self):
+        return f"{self.user.email} — {self.product.name if self.product else 'No product'} — {self.status}"

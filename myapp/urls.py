@@ -28,10 +28,12 @@ from .views import (
     CreatePaymentIntentView,
     StripeWebhookView,
     PaymentStatusView,
+    PlanListView,
+    MySubscriptionView,
 )
 
 urlpatterns = [
-    path('ping', InstagramDownloadView.as_view(), name='instagram-download'),
+    path('ping', InstagramDownloadView.as_view(), name='ping'),
     path('instagram-download', InstagramDownloadView.as_view(), name='instagram-download'),
     path('instagram-private-reel-download', InstagramPrivateReelDownloadView.as_view(), name='instagram-private-reel-download'),
     path('register', RegisterView.as_view(), name='register'),
@@ -44,4 +46,6 @@ urlpatterns = [
     path('create-payment-intent', CreatePaymentIntentView.as_view(), name='create-payment-intent'),
     path('stripe-webhook', StripeWebhookView.as_view(), name='stripe-webhook'),
     path('payment-status/<str:payment_intent_id>', PaymentStatusView.as_view(), name='payment-status'),
+    path('plans', PlanListView.as_view(), name='plan-list'),
+    path('my-subscription', MySubscriptionView.as_view(), name='my-subscription'),
 ]

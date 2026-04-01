@@ -1,7 +1,7 @@
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import serializers
 
-from .models import OTPVerification
+from .models import OTPVerification, StripeProduct, UserSubscription
 
 
 class InstagramDownloadSerializer(serializers.Serializer):
@@ -92,6 +92,11 @@ class CreateProductSerializer(serializers.Serializer):
     description = serializers.CharField(required=False, allow_blank=True)
     amount = serializers.DecimalField(required=True, max_digits=10, decimal_places=2)
     currency = serializers.CharField(required=False, default="usd")
+    plan_type = serializers.ChoiceField(
+        choices=["weekly", "monthly", "yearly", "custom"],
+        required=True,
+    )
+    duration_days = serializers.IntegerField(required=True, min_value=1)
 
 
 class CreatePaymentIntentSerializer(serializers.Serializer):
@@ -100,3 +105,40 @@ class CreatePaymentIntentSerializer(serializers.Serializer):
 
 class PaymentStatusSerializer(serializers.Serializer):
     stripe_payment_intent_id = serializers.CharField(required=True)
+
+
+class PlanListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StripeProduct
+        fields = [
+            "id",
+            "name",
+            "description",
+            "amount",
+            "currency",
+            "plan_type",
+            "duration_days",
+            "stripe_price_id",
+        ]
+
+
+class UserSubscriptionSerializer(serializers.ModelSerializer):
+    plan_name = serializers.CharField(source="product.name", read_only=True)
+    plan_type = serializers.CharField(source="product.plan_type", read_only=True)
+    amount = serializers.DecimalField(
+        source="product.amount", max_digits=10, decimal_places=2, read_only=True
+    )
+    currency = serializers.CharField(source="product.currency", read_only=True)
+
+    class Meta:
+        model = UserSubscription
+        fields = [
+            "id",
+            "status",
+            "plan_name",
+            "plan_type",
+            "amount",
+            "currency",
+            "started_at",
+            "expires_at",
+        ]

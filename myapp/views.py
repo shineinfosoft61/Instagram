@@ -22,7 +22,7 @@ import instaloader
 
 import yt_dlp
 
-from .models import OTPVerification, StripeProduct, Payment
+from .models import OTPVerification, StripeProduct, Payment, UserSubscription
 from .serializers import (
     InstagramDownloadSerializer,
     RegisterSerializer,
@@ -33,6 +33,8 @@ from .serializers import (
     CreateProductSerializer,
     CreatePaymentIntentSerializer,
     PaymentStatusSerializer,
+    PlanListSerializer,
+    UserSubscriptionSerializer,
 )
 
 
@@ -567,6 +569,8 @@ class CreateProductView(APIView):
                 description=description,
                 amount=amount,
                 currency=currency,
+                plan_type=serializer.validated_data["plan_type"],
+                duration_days=serializer.validated_data["duration_days"],
                 stripe_product_id=stripe_product.id,
                 stripe_price_id=stripe_price.id,
             )
@@ -628,7 +632,6 @@ class CreatePaymentIntentView(APIView):
                 amount=product.amount,
                 currency=product.currency,
                 status="pending",
-                metadata=payment_intent.get("metadata", {}),
             )
 
             return Response(
@@ -688,11 +691,44 @@ class StripeWebhookView(APIView):
                     payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
                     if event_type == "payment_intent.succeeded":
                         payment.status = "succeeded"
+                        payment.started_at = timezone.now()
+                        if payment.product:
+                            payment.expires_at = payment.started_at + timezone.timedelta(
+                                days=payment.product.duration_days
+                            )
                     elif event_type == "payment_intent.payment_failed":
                         payment.status = "failed"
                     elif event_type == "payment_intent.canceled":
                         payment.status = "canceled"
                     payment.save()
+
+                    if event_type == "payment_intent.succeeded" and payment.product:
+                        now = timezone.now()
+                        has_active = UserSubscription.objects.filter(
+                            user=payment.user, status="active"
+                        ).exists()
+
+                        if has_active:
+                            # Queue the new subscription — starts after current one expires
+                            UserSubscription.objects.create(
+                                user=payment.user,
+                                product=payment.product,
+                                payment=payment,
+                                status="queued",
+                                started_at=None,
+                                expires_at=None,
+                            )
+                        else:
+                            # No active subscription — activate immediately
+                            expires_at = now + timezone.timedelta(days=payment.product.duration_days)
+                            UserSubscription.objects.create(
+                                user=payment.user,
+                                product=payment.product,
+                                payment=payment,
+                                status="active",
+                                started_at=now,
+                                expires_at=expires_at,
+                            )
                 except Payment.DoesNotExist:
                     print(f"Payment not found for payment_intent_id: {payment_intent_id}")
 
@@ -744,6 +780,56 @@ class PaymentStatusView(APIView):
                         "currency": payment.currency,
                         "product_name": payment.product.name if payment.product else None,
                         "created_at": payment.created_at,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class PlanListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        try:
+            plans = StripeProduct.objects.filter(is_active=True).order_by("amount")
+            serializer = PlanListSerializer(plans, many=True)
+            return Response(
+                {"status": "success", "data": serializer.data},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class MySubscriptionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            active_sub = (
+                UserSubscription.objects.filter(user=request.user, status="active")
+                .order_by("-started_at")
+                .first()
+            )
+
+            queued_subs = UserSubscription.objects.filter(
+                user=request.user, status="queued"
+            ).order_by("created_at")
+
+            return Response(
+                {
+                    "status": "success",
+                    "data": {
+                        "active": UserSubscriptionSerializer(active_sub).data if active_sub else None,
+                        "queued": UserSubscriptionSerializer(queued_subs, many=True).data,
                     },
                 },
                 status=status.HTTP_200_OK,
