@@ -15,17 +15,11 @@ class RegisterSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
-    confirm_password = serializers.CharField(write_only=True, min_length=8)
 
     def validate_email(self, value):
         if CustomUser.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("A user with this email already exists.")
         return value
-
-    def validate(self, attrs):
-        if attrs.get("password") != attrs.get("confirm_password"):
-            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
-        return attrs
 
     def create(self, validated_data):
         name = validated_data.get("name")
@@ -66,16 +60,10 @@ class VerifyOTPSerializer(serializers.Serializer):
     email = serializers.EmailField()
     otp = serializers.CharField(max_length=6)
     new_password = serializers.CharField(write_only=True, min_length=8)
-    confirm_password = serializers.CharField(write_only=True, min_length=8)
 
     def validate(self, attrs):
         email = attrs.get("email")
         otp = attrs.get("otp")
-        new_password = attrs.get("new_password")
-        confirm_password = attrs.get("confirm_password")
-
-        if new_password != confirm_password:
-            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
 
         try:
             user = CustomUser.objects.get(email__iexact=email)
