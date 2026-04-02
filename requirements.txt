@@ -9,3 +9,4 @@ yt_dlp
 djangorestframework-simplejwt
 psycopg2-binary
 stripe
+whitenoise
