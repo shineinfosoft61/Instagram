@@ -43,6 +43,8 @@ class Ping(APIView):
         return Response({"success": "health is ok"}, status=200)
 
 class InstagramDownloadView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         url = request.data.get("url")
         if not url:
@@ -203,6 +205,8 @@ class InstagramDownloadView(APIView):
 
 
 class InstagramPrivateReelDownloadView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         url = request.data.get("url")
         ig_username = request.data.get("ig_username") or getattr(settings, "INSTAGRAM_USERNAME", None)
