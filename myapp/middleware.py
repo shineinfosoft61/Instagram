@@ -10,8 +10,7 @@ User = get_user_model()
 
 # Add any path here that requires an active subscription
 SUBSCRIPTION_PROTECTED_PATHS = [
-    "/api/instagram-download",
-    "/api/instagram-private-reel-download",
+
 ]
 
 
